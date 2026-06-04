@@ -54,6 +54,7 @@ export function RegisterCard() {
       ...(type === "inbucket" ? { api_base: "", domain: [], random_subdomain: true } : {}),
       ...(type === "duckmail" ? { api_key: "", default_domain: "duckmail.sbs" } : {}),
       ...(type === "gptmail" ? { api_key: "", default_domain: "" } : {}),
+      ...(type === "qq_mail" ? { domain: [], imap_host: "imap.qq.com", imap_port: 993, imap_username: "", imap_password: "", imap_mailbox: "INBOX" } : {}),
       ...(type === "yyds_mail" ? { api_base: "https://maliapi.215.im/v1", api_key: "", domain: [], subdomain: "", wildcard: false } : {}),
       ...(type === "ddg_mail" ? { ddg_token: "", cf_inbox_jwt: "", cf_domain: [], admin_password: "" } : {}),
     });
@@ -176,6 +177,7 @@ export function RegisterCard() {
                             <SelectItem value="inbucket">inbucket_mail</SelectItem>
                             <SelectItem value="duckmail">duckmail</SelectItem>
                             <SelectItem value="gptmail">gptmail(未测试)</SelectItem>
+                            <SelectItem value="qq_mail">qq_mail (QQ邮箱IMAP)</SelectItem>
                             <SelectItem value="yyds_mail">yyds_mail</SelectItem>
                             <SelectItem value="ddg_mail">ddg_mail (DDG邮箱+CF中转)</SelectItem>
                           </SelectContent>
@@ -246,6 +248,30 @@ export function RegisterCard() {
                           <Input value={String(provider.default_domain || "")} onChange={(event) => updateProvider(index, { default_domain: event.target.value })} placeholder={type === "duckmail" ? "duckmail.sbs" : ""} className="h-10 rounded-xl border-stone-200 bg-white" disabled={config.enabled} />
                         </div>
                       ) : null}
+                      {type === "qq_mail" ? (
+                        <>
+                          <div className="space-y-2">
+                            <label className="text-sm text-stone-700">IMAP Host</label>
+                            <Input value={String(provider.imap_host || "imap.qq.com")} onChange={(event) => updateProvider(index, { imap_host: event.target.value })} className="h-10 rounded-xl border-stone-200 bg-white" disabled={config.enabled} />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm text-stone-700">IMAP Port</label>
+                            <Input value={String(provider.imap_port || 993)} onChange={(event) => updateProvider(index, { imap_port: Number(event.target.value) || 993 })} className="h-10 rounded-xl border-stone-200 bg-white" disabled={config.enabled} />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm text-stone-700">QQ邮箱账号</label>
+                            <Input value={String(provider.imap_username || "")} onChange={(event) => updateProvider(index, { imap_username: event.target.value })} placeholder="example@qq.com" className="h-10 rounded-xl border-stone-200 bg-white" disabled={config.enabled} />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm text-stone-700">QQ邮箱授权码</label>
+                            <Input value={String(provider.imap_password || "")} onChange={(event) => updateProvider(index, { imap_password: event.target.value })} className="h-10 rounded-xl border-stone-200 bg-white" disabled={config.enabled} />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm text-stone-700">IMAP Mailbox</label>
+                            <Input value={String(provider.imap_mailbox || "INBOX")} onChange={(event) => updateProvider(index, { imap_mailbox: event.target.value })} className="h-10 rounded-xl border-stone-200 bg-white" disabled={config.enabled} />
+                          </div>
+                        </>
+                      ) : null}
                       {type === "yyds_mail" ? (
                         <>
                           <div className="space-y-2">
@@ -260,10 +286,10 @@ export function RegisterCard() {
                       ) : null}
                     </div>
 
-                    {type === "cloudmail_gen" || type === "tempmail_lol" || type === "cloudflare_temp_email" || type === "moemail" || type === "inbucket" || type === "yyds_mail" || type === "ddg_mail" ? (
+                    {type === "cloudmail_gen" || type === "tempmail_lol" || type === "cloudflare_temp_email" || type === "moemail" || type === "inbucket" || type === "yyds_mail" || type === "ddg_mail" || type === "qq_mail" ? (
                       <div className="space-y-2">
-                        <label className="text-sm text-stone-700">{type === "cloudmail_gen" ? "邮箱域名" : type === "inbucket" ? "基础域名列表" : "Domain"}</label>
-                        <Textarea value={domains} onChange={(event) => updateProvider(index, { domain: event.target.value.split(/[\n,]/).map((item) => item.trim()) })} placeholder={type === "cloudmail_gen" ? "每行一个域名，留空则使用服务默认域名" : type === "inbucket" ? "每行一个基础域名，系统会自动生成随机子域名" : type === "moemail" ? "每行一个域名" : "每行一个域名，留空则使用服务默认域名"} className="min-h-20 rounded-xl border-stone-200 bg-white font-mono text-xs" disabled={config.enabled} />
+                        <label className="text-sm text-stone-700">{type === "cloudmail_gen" ? "邮箱域名" : type === "inbucket" ? "基础域名列表" : type === "qq_mail" ? "邮箱域名后缀" : "Domain"}</label>
+                        <Textarea value={domains} onChange={(event) => updateProvider(index, { domain: event.target.value.split(/[\n,]/).map((item) => item.trim()) })} placeholder={type === "cloudmail_gen" ? "每行一个域名，留空则使用服务默认域名" : type === "inbucket" ? "每行一个基础域名，系统会自动生成随机子域名" : type === "qq_mail" ? "每行一个域名后缀，例如 your-domain.com" : type === "moemail" ? "每行一个域名" : "每行一个域名，留空则使用服务默认域名"} className="min-h-20 rounded-xl border-stone-200 bg-white font-mono text-xs" disabled={config.enabled} />
                       </div>
                     ) : null}
                     {type === "cloudmail_gen" ? (

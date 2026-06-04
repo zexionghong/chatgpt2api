@@ -61,6 +61,12 @@ def _collect_image_urls(data: list[Any]) -> list[str]:
     return urls
 
 
+def _format_duration_ms(duration_ms: int) -> str:
+    if duration_ms < 1000:
+        return f"{duration_ms}ms"
+    return f"{duration_ms / 1000:.2f}s"
+
+
 def _public_task(task: dict[str, Any]) -> dict[str, Any]:
     item = {
         "id": task.get("id"),
@@ -320,6 +326,7 @@ class ImageTaskService:
     ) -> None:
         endpoint = "/v1/images/edits" if mode == "edit" else "/v1/images/generations"
         summary_prefix = "图生图" if mode == "edit" else "文生图"
+        duration_ms = int((time.time() - started) * 1000)
         detail = {
             "key_id": identity.get("id"),
             "key_name": identity.get("name"),
@@ -328,7 +335,7 @@ class ImageTaskService:
             "model": model,
             "started_at": datetime.fromtimestamp(started).strftime("%Y-%m-%d %H:%M:%S"),
             "ended_at": _now_iso(),
-            "duration_ms": int((time.time() - started) * 1000),
+            "duration_ms": duration_ms,
             "status": status,
         }
         if request_preview:
@@ -340,7 +347,7 @@ class ImageTaskService:
         if urls:
             detail["urls"] = list(dict.fromkeys(urls))
         try:
-            log_service.add(LOG_TYPE_CALL, f"{summary_prefix}{suffix}", detail)
+            log_service.add(LOG_TYPE_CALL, f"{summary_prefix}{suffix}，耗时 {_format_duration_ms(duration_ms)}", detail)
         except Exception:
             pass
 

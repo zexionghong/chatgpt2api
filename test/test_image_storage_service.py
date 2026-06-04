@@ -41,6 +41,31 @@ class FakeWebDAVClient:
         return {"ok": True, "status": 200, "error": None}
 
 
+class FakeS3Client:
+    uploaded: dict[str, bytes] = {}
+    deleted: list[str] = []
+
+    def __init__(self, _settings):
+        pass
+
+    def put(self, rel: str, payload: bytes, content_type: str = "image/png") -> str:
+        self.uploaded[rel] = payload
+        return f"https://bucket.oss.example.test/{rel}"
+
+    def get(self, rel: str) -> bytes:
+        return self.uploaded[rel]
+
+    def delete(self, rel: str) -> bool:
+        self.deleted.append(rel)
+        self.uploaded.pop(rel, None)
+        return True
+
+    def test(self) -> dict[str, object]:
+        self.put(".chatgpt2api_s3_test.txt", b"chatgpt2api s3 test\n", content_type="text/plain")
+        self.delete(".chatgpt2api_s3_test.txt")
+        return {"ok": True, "status": 200, "error": None}
+
+
 class ImageStorageServiceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -54,6 +79,13 @@ class ImageStorageServiceTests(unittest.TestCase):
             "webdav_username": "",
             "webdav_password": "",
             "webdav_root_path": "chatgpt2api/images",
+            "s3_endpoint": "",
+            "s3_region": "auto",
+            "s3_bucket": "",
+            "s3_access_key_id": "",
+            "s3_secret_access_key": "",
+            "s3_prefix": "chatgpt2api/images",
+            "s3_force_path_style": True,
             "public_base_url": "",
         }
         self.config_patcher = mock.patch("services.image_storage_service.config")
@@ -65,6 +97,8 @@ class ImageStorageServiceTests(unittest.TestCase):
         self.mock_config.get_image_storage_settings.side_effect = lambda: dict(self.settings)
         FakeWebDAVClient.uploaded = {}
         FakeWebDAVClient.deleted = []
+        FakeS3Client.uploaded = {}
+        FakeS3Client.deleted = []
 
     def service(self) -> ImageStorageService:
         return ImageStorageService(self.data_dir / "image_index.json")
@@ -133,6 +167,78 @@ class ImageStorageServiceTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertIn(".chatgpt2api_webdav_test.txt", FakeWebDAVClient.deleted)
+
+    def test_s3_mode_uploads_without_local_file(self):
+        self.settings.update({
+            "enabled": True,
+            "mode": "s3",
+            "s3_endpoint": "https://oss.example.test",
+            "s3_region": "cn-hangzhou",
+            "s3_bucket": "bucket",
+            "s3_access_key_id": "ak",
+            "s3_secret_access_key": "sk",
+            "s3_prefix": "chatgpt2api/images",
+            "public_base_url": "https://cdn.example.test",
+        })
+        with mock.patch("services.image_storage_service.S3Client", FakeS3Client):
+            stored = self.service().save(png_bytes(), "http://app.test")
+            payload = self.service().get_bytes(stored.rel)
+
+        self.assertEqual(stored.storage, "s3")
+        self.assertFalse((self.images_dir / stored.rel).exists())
+        self.assertIn(stored.rel, FakeS3Client.uploaded)
+        self.assertEqual(payload, FakeS3Client.uploaded[stored.rel])
+        self.assertEqual(stored.url, f"https://cdn.example.test/chatgpt2api/images/{stored.rel}")
+
+    def test_s3_both_mode_saves_to_local_and_s3(self):
+        self.settings.update({
+            "enabled": True,
+            "mode": "s3_both",
+            "s3_endpoint": "https://oss.example.test",
+            "s3_region": "cn-hangzhou",
+            "s3_bucket": "bucket",
+            "s3_access_key_id": "ak",
+            "s3_secret_access_key": "sk",
+        })
+        with mock.patch("services.image_storage_service.S3Client", FakeS3Client):
+            stored = self.service().save(png_bytes(), "http://app.test")
+
+        self.assertEqual(stored.storage, "s3_both")
+        self.assertTrue((self.images_dir / stored.rel).is_file())
+        self.assertIn(stored.rel, FakeS3Client.uploaded)
+
+    def test_delete_removes_s3_object(self):
+        self.settings.update({
+            "enabled": True,
+            "mode": "s3",
+            "s3_endpoint": "https://oss.example.test",
+            "s3_region": "cn-hangzhou",
+            "s3_bucket": "bucket",
+            "s3_access_key_id": "ak",
+            "s3_secret_access_key": "sk",
+        })
+        with mock.patch("services.image_storage_service.S3Client", FakeS3Client):
+            stored = self.service().save(png_bytes(), "http://app.test")
+            removed = self.service().delete(stored.rel)
+
+        self.assertTrue(removed)
+        self.assertIn(stored.rel, FakeS3Client.deleted)
+
+    def test_test_storage_uses_s3_probe_for_s3_mode(self):
+        self.settings.update({
+            "enabled": True,
+            "mode": "s3",
+            "s3_endpoint": "https://oss.example.test",
+            "s3_region": "cn-hangzhou",
+            "s3_bucket": "bucket",
+            "s3_access_key_id": "ak",
+            "s3_secret_access_key": "sk",
+        })
+        with mock.patch("services.image_storage_service.S3Client", FakeS3Client):
+            result = self.service().test_connection()
+
+        self.assertTrue(result["ok"])
+        self.assertIn(".chatgpt2api_s3_test.txt", FakeS3Client.deleted)
 
 
 if __name__ == "__main__":

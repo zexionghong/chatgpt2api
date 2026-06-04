@@ -9,7 +9,8 @@ export type ImageConversationMode = "generate" | "edit";
 export type StoredReferenceImage = {
   name: string;
   type: string;
-  dataUrl: string;
+  dataUrl?: string;
+  url?: string;
 };
 
 export type StoredImage = {
@@ -95,7 +96,8 @@ function normalizeReferenceImage(image: StoredReferenceImage): StoredReferenceIm
   return {
     name: image.name || "reference.png",
     type: image.type || "image/png",
-    dataUrl: image.dataUrl,
+    dataUrl: typeof image.dataUrl === "string" && image.dataUrl ? image.dataUrl : undefined,
+    url: typeof image.url === "string" && image.url ? image.url : undefined,
   };
 }
 
@@ -112,7 +114,10 @@ function getLegacyReferenceImages(source: Record<string, unknown>): StoredRefere
           return false;
         }
         const candidate = image as StoredReferenceImage;
-        return typeof candidate.dataUrl === "string" && candidate.dataUrl.length > 0;
+        return (
+          (typeof candidate.dataUrl === "string" && candidate.dataUrl.length > 0) ||
+          (typeof candidate.url === "string" && candidate.url.length > 0)
+        );
       })
       .map(normalizeReferenceImage);
   }

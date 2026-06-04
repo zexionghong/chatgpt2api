@@ -5,8 +5,10 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from services.image_task_service import ImageTaskService
+from services.log_service import LOG_TYPE_CALL, LogService
 
 
 OWNER = {"id": "owner-1", "name": "Owner", "role": "admin"}
@@ -143,6 +145,27 @@ class ImageTaskServiceTests(unittest.TestCase):
 
             self.assertEqual([item["status"] for item in result["items"]], ["error", "error"])
             self.assertTrue(all("已中断" in item.get("error", "") for item in result["items"]))
+
+    def test_image_task_log_summary_includes_duration(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            service = self.make_service(Path(tmp_dir) / "image_tasks.json")
+            temp_log_service = LogService(Path(tmp_dir) / "logs.jsonl")
+
+            with mock.patch("services.image_task_service.log_service", temp_log_service), mock.patch("services.image_task_service.time.time", return_value=103.456):
+                service._log_call(
+                    OWNER,
+                    "generate",
+                    "gpt-image-2",
+                    100.0,
+                    "调用完成",
+                    urls=["http://example.test/image.png"],
+                )
+
+            items = temp_log_service.list(type=LOG_TYPE_CALL)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["summary"], "文生图调用完成，耗时 3.46s")
+        self.assertEqual(items[0]["detail"]["duration_ms"], 3456)
 
 
 if __name__ == "__main__":

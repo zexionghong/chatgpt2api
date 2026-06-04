@@ -22,7 +22,7 @@ type ImageComposerProps = {
   imageModels: ImageModel[];
   availableQuota: string;
   activeTaskCount: number;
-  referenceImages: Array<{ name: string; dataUrl: string }>;
+  referenceImages: Array<{ name: string; dataUrl?: string; url?: string }>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
   onPromptChange: (value: string) => void;
@@ -116,7 +116,7 @@ export function ImageComposer({
   const sizeMenuRef = useRef<HTMLDivElement>(null);
   const sizeMenuBtnRef = useRef<HTMLButtonElement>(null);
   const lightboxImages = useMemo(
-    () => referenceImages.map((image, index) => ({ id: `${image.name}-${index}`, src: image.dataUrl })),
+    () => referenceImages.map((image, index) => ({ id: `${image.name}-${index}`, src: image.dataUrl || image.url || "" })),
     [referenceImages],
   );
   const modelOptions = useMemo(
@@ -233,7 +233,7 @@ export function ImageComposer({
                   aria-label={`预览参考图 ${image.name || index + 1}`}
                 >
                   <img
-                    src={image.dataUrl}
+                    src={image.dataUrl || image.url || ""}
                     alt={image.name || `参考图 ${index + 1}`}
                     className="h-full w-full object-cover"
                   />

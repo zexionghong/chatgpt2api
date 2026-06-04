@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import imaplib
 import json
 import random
 import re
@@ -8,7 +9,7 @@ import string
 import time
 from datetime import datetime, timezone
 from email import message_from_string, policy
-from email.utils import parsedate_to_datetime
+from email.utils import getaddresses, parsedate_to_datetime
 from threading import Lock
 from typing import Any, Callable, TypeVar
 
@@ -19,6 +20,15 @@ from services.config import DATA_DIR
 
 DDG_ALIASES_FILE = DATA_DIR / "ddg_aliases.json"
 _ddg_aliases_lock = Lock()
+mail_log_sink: Callable[[str, str], None] | None = None
+
+
+def _mail_log(text: str, color: str = "") -> None:
+    if mail_log_sink:
+        try:
+            mail_log_sink(text, color)
+        except Exception:
+            pass
 
 
 def _load_ddg_aliases() -> set[str]:
@@ -186,6 +196,35 @@ def _message_matches_email(data: dict[str, Any], email: str) -> bool:
         if key in data:
             candidates.extend(_extract_text_candidates(data.get(key)))
     return not target or not candidates or any(target in str(item).strip().lower() for item in candidates if str(item).strip())
+
+
+def _message_recipient_candidates(message: message_from_string) -> list[str]:
+    headers = [
+        "to",
+        "delivered-to",
+        "x-original-to",
+        "envelope-to",
+        "apparently-to",
+        "resent-to",
+    ]
+    values: list[str] = []
+    for header in headers:
+        values.extend(str(value or "") for value in message.get_all(header, []))
+    candidates = [address.lower() for _, address in getaddresses(values) if address]
+    candidates.extend(value.strip().lower() for value in values if "@" in value)
+    return list(dict.fromkeys(candidates))
+
+
+def _message_matches_exact_recipient(message: message_from_string, email: str) -> bool:
+    target = str(email or "").strip().lower()
+    if not target:
+        return False
+    return any(target == candidate or f"<{target}>" in candidate for candidate in _message_recipient_candidates(message))
+
+
+def _mailbox_created_at(mailbox: dict[str, Any]) -> datetime:
+    created_at = _parse_received_at(mailbox.get("created_at"))
+    return created_at or datetime.fromtimestamp(0, tz=timezone.utc)
 
 
 def _extract_code(message: dict[str, Any]) -> str | None:
@@ -695,6 +734,170 @@ class GptMailProvider(BaseMailProvider):
         self.session.close()
 
 
+class QQMailProvider(BaseMailProvider):
+    name = "qq_mail"
+
+    def __init__(self, entry: dict, conf: dict):
+        super().__init__(conf, str(entry.get("provider_ref") or ""))
+        self.domain = _normalize_string_list(entry.get("domain"))
+        self.imap_host = str(entry.get("imap_host") or "imap.qq.com").strip() or "imap.qq.com"
+        self.imap_port = int(entry.get("imap_port") or 993)
+        self.imap_username = str(entry.get("imap_username") or "").strip()
+        self.imap_password = str(entry.get("imap_password") or "").strip()
+        self.imap_mailbox = str(entry.get("imap_mailbox") or "INBOX").strip() or "INBOX"
+        self.clock_skew_secs = max(0, int(entry.get("clock_skew_secs") or 30))
+        self.search_limit = max(1, int(entry.get("search_limit") or 5))
+        self.retry_attempts = max(1, int(entry.get("retry_attempts") or 5))
+        self.retry_interval_secs = max(0, float(entry.get("retry_interval_secs") or 3))
+
+    def create_mailbox(self, username: str | None = None) -> dict[str, Any]:
+        if not self.domain:
+            raise RuntimeError("QQMail 需要至少配置一个 domain")
+        address = f"{username or _random_mailbox_name()}@{_next_domain(self.domain)}"
+        created_at = datetime.now(timezone.utc).isoformat()
+        _mail_log(f"[QQMail] 生成注册邮箱: {address}，创建时间 {created_at}")
+        return {
+            "provider": self.name,
+            "provider_ref": self.provider_ref,
+            "address": address,
+            "created_at": created_at,
+        }
+
+    def _connect(self):
+        if not self.imap_username or not self.imap_password:
+            raise RuntimeError("QQMail 需要 imap_username 和 imap_password（QQ邮箱授权码）")
+        _mail_log(f"[QQMail] 连接 IMAP: {self.imap_host}:{self.imap_port}，邮箱 {self.imap_username}，目录 {self.imap_mailbox}")
+        client = imaplib.IMAP4_SSL(self.imap_host, self.imap_port)
+        client.login(self.imap_username, self.imap_password)
+        status, data = client.select(self.imap_mailbox, readonly=True)
+        if status != "OK" or not data:
+            raise RuntimeError(f"QQMail 选择目录失败: status={status}")
+        try:
+            message_count = int(data[0])
+        except Exception:
+            raise RuntimeError(f"QQMail 读取目录邮件数失败: data={data!r}")
+        return client, message_count
+
+    def _normalize_message(self, message_id: str, parsed: message_from_string) -> dict[str, Any]:
+        text_parts: list[str] = []
+        html_parts: list[str] = []
+        for part in parsed.walk() if parsed.is_multipart() else [parsed]:
+            if part.get_content_maintype() == "multipart":
+                continue
+            content_type = part.get_content_type()
+            try:
+                payload = part.get_content()
+            except Exception:
+                payload = ""
+            if not payload:
+                continue
+            if content_type == "text/html":
+                html_parts.append(str(payload))
+            else:
+                text_parts.append(str(payload))
+        return {
+            "provider": self.name,
+            "mailbox": "",
+            "message_id": str(parsed.get("Message-ID") or message_id),
+            "subject": str(parsed.get("Subject") or ""),
+            "sender": str(parsed.get("From") or ""),
+            "text_content": "\n".join(text_parts).strip(),
+            "html_content": "\n".join(html_parts).strip(),
+            "received_at": _parse_received_at(parsed.get("Date")),
+            "to": str(parsed.get("To") or ""),
+            "raw": {"headers": dict(parsed.items())},
+        }
+
+    def fetch_latest_message(self, mailbox: dict[str, Any]) -> dict[str, Any] | None:
+        address = str(mailbox.get("address") or "").strip().lower()
+        if not address:
+            raise RuntimeError("QQMail 缺少 address")
+        created_at = _mailbox_created_at(mailbox)
+        min_received_at = created_at.timestamp() - self.clock_skew_secs
+        _mail_log(f"[QQMail] 开始查收验证码: 目标 {address}，只接受 {datetime.fromtimestamp(min_received_at, tz=timezone.utc).isoformat()} 之后的邮件")
+        client, message_count = self._connect()
+        try:
+            if message_count <= 0:
+                _mail_log("[QQMail] IMAP 目录为空", "yellow")
+                return None
+            start_id = max(1, message_count - self.search_limit + 1)
+            message_ids = [str(index).encode("ascii") for index in range(start_id, message_count + 1)]
+            _mail_log(f"[QQMail] IMAP 目录共有 {message_count} 封，检查最近 {len(message_ids)} 封")
+            matches: list[dict[str, Any]] = []
+            for message_id in reversed(message_ids):
+                fetch_status, fetch_data = client.fetch(message_id, "(RFC822)")
+                if fetch_status != "OK" or not fetch_data:
+                    _mail_log(f"[QQMail] 跳过邮件 {message_id.decode('ascii', errors='ignore')}: fetch status={fetch_status}", "yellow")
+                    continue
+                raw_bytes = b""
+                for item in fetch_data:
+                    if isinstance(item, tuple) and isinstance(item[1], (bytes, bytearray)):
+                        raw_bytes = bytes(item[1])
+                        break
+                if not raw_bytes:
+                    _mail_log(f"[QQMail] 跳过邮件 {message_id.decode('ascii', errors='ignore')}: 内容为空", "yellow")
+                    continue
+                parsed = message_from_string(raw_bytes.decode("utf-8", errors="replace"), policy=policy.default)
+                recipients = _message_recipient_candidates(parsed)
+                if not _message_matches_exact_recipient(parsed, address):
+                    _mail_log(
+                        f"[QQMail] 跳过邮件 {message_id.decode('ascii', errors='ignore')}: 收件人不匹配，目标 {address}，邮件收件人 {', '.join(recipients) or '-'}"
+                    )
+                    continue
+                received_at = _parse_received_at(parsed.get("Date"))
+                if received_at and received_at.timestamp() < min_received_at:
+                    _mail_log(
+                        f"[QQMail] 跳过邮件 {message_id.decode('ascii', errors='ignore')}: 时间过早 {received_at.isoformat()}，目标创建 {created_at.isoformat()}"
+                    )
+                    continue
+                normalized = self._normalize_message(message_id.decode("ascii", errors="ignore"), parsed)
+                normalized["mailbox"] = address
+                _mail_log(
+                    f"[QQMail] 命中候选邮件 {normalized['message_id']}: subject={normalized['subject'] or '-'}，date={received_at.isoformat() if received_at else '-'}",
+                    "green",
+                )
+                matches.append(normalized)
+            if not matches:
+                _mail_log(f"[QQMail] 本轮未找到匹配邮件: {address}", "yellow")
+                return None
+            matched = max(
+                matches,
+                key=lambda item: (
+                    (item.get("received_at") or datetime.fromtimestamp(0, tz=timezone.utc)).timestamp(),
+                    str(item.get("message_id") or ""),
+                ),
+            )
+            _mail_log(f"[QQMail] 使用邮件 {matched.get('message_id') or '-'} 提取验证码", "green")
+            return matched
+        finally:
+            try:
+                client.logout()
+            except Exception:
+                pass
+
+    def wait_for_code(self, mailbox: dict[str, Any]) -> str | None:
+        seen_value = mailbox.setdefault("_seen_code_message_refs", [])
+        if not isinstance(seen_value, list):
+            seen_value = []
+            mailbox["_seen_code_message_refs"] = seen_value
+        seen_refs = {str(item) for item in seen_value}
+
+        for attempt in range(1, self.retry_attempts + 1):
+            _mail_log(f"[QQMail] 第 {attempt}/{self.retry_attempts} 次查询验证码")
+            message = self.fetch_latest_message(mailbox)
+            if message:
+                ref = _message_tracking_ref(message)
+                if ref not in seen_refs:
+                    code = _extract_code(message)
+                    if code:
+                        seen_value.append(ref)
+                        return code
+                    _mail_log(f"[QQMail] 命中邮件但未提取到验证码: {message.get('message_id') or '-'}", "yellow")
+            if attempt < self.retry_attempts:
+                time.sleep(self.retry_interval_secs)
+        return None
+
+
 class MoEmailProvider(BaseMailProvider):
     name = "moemail"
 
@@ -960,6 +1163,8 @@ def _create_provider(mail_config: dict, provider: str = "", provider_ref: str = 
         return DuckMailProvider(entry, conf)
     if entry["type"] == "gptmail":
         return GptMailProvider(entry, conf)
+    if entry["type"] == "qq_mail":
+        return QQMailProvider(entry, conf)
     if entry["type"] == "moemail":
         return MoEmailProvider(entry, conf)
     if entry["type"] == "inbucket":

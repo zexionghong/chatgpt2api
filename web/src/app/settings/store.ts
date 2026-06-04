@@ -38,6 +38,13 @@ export const PAGE_SIZE_OPTIONS = ["50", "100", "200"] as const;
 
 export type PageSizeOption = (typeof PAGE_SIZE_OPTIONS)[number];
 
+const IMAGE_STORAGE_MODES: ImageStorageMode[] = ["webdav", "both", "s3", "s3_both"];
+
+function normalizeImageStorageMode(enabled: boolean, mode: unknown): ImageStorageMode {
+  const value = String(mode || "local") as ImageStorageMode;
+  return enabled && IMAGE_STORAGE_MODES.includes(value) ? value : "local";
+}
+
 function normalizeConfig(config: SettingsConfig): SettingsConfig {
   const imageStorage = typeof config.image_storage === "object" && config.image_storage
     ? config.image_storage as ImageStorageSettings
@@ -48,13 +55,16 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
       webdav_username: "",
       webdav_password: "",
       webdav_root_path: "chatgpt2api/images",
+      s3_endpoint: "",
+      s3_region: "auto",
+      s3_bucket: "",
+      s3_access_key_id: "",
+      s3_secret_access_key: "",
+      s3_prefix: "chatgpt2api/images",
+      s3_force_path_style: true,
       public_base_url: "",
     };
-  const imageStorageMode: ImageStorageMode = imageStorage.enabled && imageStorage.mode === "both"
-    ? "both"
-    : imageStorage.enabled && imageStorage.mode === "webdav"
-      ? "webdav"
-      : "local";
+  const imageStorageMode = normalizeImageStorageMode(Boolean(imageStorage.enabled), imageStorage.mode);
   const backup = typeof config.backup === "object" && config.backup
     ? config.backup as BackupSettings
     : {
@@ -113,6 +123,13 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
       webdav_username: String(imageStorage.webdav_username || ""),
       webdav_password: String(imageStorage.webdav_password || ""),
       webdav_root_path: String(imageStorage.webdav_root_path || "chatgpt2api/images"),
+      s3_endpoint: String(imageStorage.s3_endpoint || ""),
+      s3_region: String(imageStorage.s3_region || "auto"),
+      s3_bucket: String(imageStorage.s3_bucket || ""),
+      s3_access_key_id: String(imageStorage.s3_access_key_id || ""),
+      s3_secret_access_key: String(imageStorage.s3_secret_access_key || ""),
+      s3_prefix: String(imageStorage.s3_prefix || "chatgpt2api/images"),
+      s3_force_path_style: Boolean(imageStorage.s3_force_path_style !== false),
       public_base_url: String(imageStorage.public_base_url || ""),
     },
     backup: {
@@ -370,11 +387,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         },
         image_storage: {
           enabled: Boolean(config.image_storage?.enabled),
-          mode: config.image_storage?.enabled && ["webdav", "both"].includes(String(config.image_storage?.mode)) ? config.image_storage.mode : "local",
+          mode: normalizeImageStorageMode(Boolean(config.image_storage?.enabled), config.image_storage?.mode),
           webdav_url: String(config.image_storage?.webdav_url || "").trim(),
           webdav_username: String(config.image_storage?.webdav_username || "").trim(),
           webdav_password: String(config.image_storage?.webdav_password || "").trim(),
           webdav_root_path: String(config.image_storage?.webdav_root_path || "chatgpt2api/images").trim(),
+          s3_endpoint: String(config.image_storage?.s3_endpoint || "").trim(),
+          s3_region: String(config.image_storage?.s3_region || "auto").trim(),
+          s3_bucket: String(config.image_storage?.s3_bucket || "").trim(),
+          s3_access_key_id: String(config.image_storage?.s3_access_key_id || "").trim(),
+          s3_secret_access_key: String(config.image_storage?.s3_secret_access_key || "").trim(),
+          s3_prefix: String(config.image_storage?.s3_prefix || "chatgpt2api/images").trim(),
+          s3_force_path_style: Boolean(config.image_storage?.s3_force_path_style !== false),
           public_base_url: String(config.image_storage?.public_base_url || "").trim(),
         },
         backup: {
@@ -539,12 +563,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       }
       const data = await testImageStorageConnection();
       if (data.result.ok) {
-        toast.success(`WebDAV 连接可用：HTTP ${data.result.status}`);
+        toast.success(`图片存储连接可用：HTTP ${data.result.status}`);
       } else {
-        toast.error(`WebDAV 连接失败：${data.result.error ?? `HTTP ${data.result.status}`}`);
+        toast.error(`图片存储连接失败：${data.result.error ?? `HTTP ${data.result.status}`}`);
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "测试 WebDAV 失败");
+      toast.error(error instanceof Error ? error.message : "测试图片存储失败");
     } finally {
       set({ isTestingImageStorage: false });
     }

@@ -58,6 +58,44 @@ class ConfigLoadingTests(unittest.TestCase):
                 else:
                     module.os.environ["CHATGPT2API_AUTH_KEY"] = old_env_auth_key
 
+    def test_normalizes_s3_image_storage_settings(self) -> None:
+        module = self.config_module
+
+        settings = module._normalize_image_storage_settings({
+            "enabled": True,
+            "mode": "s3",
+            "s3_endpoint": "https://oss.example.com/",
+            "s3_region": "cn-hangzhou",
+            "s3_bucket": "bucket",
+            "s3_access_key_id": "ak",
+            "s3_secret_access_key": "sk",
+            "s3_prefix": "/chatgpt2api/images/",
+            "s3_force_path_style": "false",
+            "public_base_url": "https://cdn.example.com/images/",
+        })
+
+        self.assertEqual(settings["mode"], "s3")
+        self.assertEqual(settings["s3_endpoint"], "https://oss.example.com")
+        self.assertEqual(settings["s3_region"], "cn-hangzhou")
+        self.assertEqual(settings["s3_bucket"], "bucket")
+        self.assertEqual(settings["s3_prefix"], "chatgpt2api/images")
+        self.assertFalse(settings["s3_force_path_style"])
+        self.assertEqual(settings["public_base_url"], "https://cdn.example.com/images")
+
+    def test_validates_s3_image_storage_required_fields(self) -> None:
+        module = self.config_module
+        settings = module._normalize_image_storage_settings({
+            "enabled": True,
+            "mode": "s3",
+            "s3_endpoint": "https://oss.example.com",
+            "s3_bucket": "",
+            "s3_access_key_id": "ak",
+            "s3_secret_access_key": "sk",
+        })
+
+        with self.assertRaisesRegex(ValueError, "S3 Bucket"):
+            module._validate_image_storage_settings(settings)
+
 
 if __name__ == "__main__":
     unittest.main()

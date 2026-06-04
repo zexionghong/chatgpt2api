@@ -170,36 +170,45 @@ function buildReferenceImageFromResult(image: StoredImage, fileName: string): St
   };
 }
 
-async function fetchImageAsFile(url: string, fileName: string) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error("读取结果图失败");
-  }
-  const blob = await response.blob();
-  return new File([blob], fileName, { type: blob.type || "image/png" });
-}
-
-async function buildReferenceImageFromStoredImage(image: StoredImage, fileName: string) {
+function buildReferenceImageFromStoredImage(image: StoredImage, fileName: string) {
   const direct = buildReferenceImageFromResult(image, fileName);
   if (direct) {
     return {
       referenceImage: direct,
-      file: dataUrlToFile(direct.dataUrl, direct.name, direct.type),
     };
   }
 
   if (!image.url) {
     return null;
   }
-  const file = await fetchImageAsFile(image.url, fileName);
   return {
     referenceImage: {
-      name: file.name,
-      type: file.type || "image/png",
-      dataUrl: await readFileAsDataUrl(file),
+      name: fileName,
+      type: "image/png",
+      url: image.url,
     },
-    file,
   };
+}
+
+function referenceImageToFile(image: StoredReferenceImage, fallbackName: string) {
+  if (!image.dataUrl) {
+    return null;
+  }
+  return dataUrlToFile(image.dataUrl, image.name || fallbackName, image.type);
+}
+
+function buildEditTaskReferences(images: StoredReferenceImage[], fallbackPrefix: string) {
+  return {
+    files: images.flatMap((image, index) => {
+      const file = referenceImageToFile(image, `${fallbackPrefix}-${index + 1}.png`);
+      return file ? [file] : [];
+    }),
+    imageUrls: images.flatMap((image) => (image.url ? [image.url] : [])),
+  };
+}
+
+function isStoredReferenceImage(image: StoredImage | StoredReferenceImage): image is StoredReferenceImage {
+  return "name" in image && "type" in image;
 }
 
 function taskDataToStoredImage(image: StoredImage, task: ImageTask): StoredImage {
@@ -454,7 +463,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [imageModel, setImageModel] = useState<ImageModel>("gpt-image-2");
   const [imageModels, setImageModels] = useState<ImageModel[]>(["gpt-image-2"]);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
   const [conversations, setConversations] = useState<ImageConversation[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
@@ -888,7 +896,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   const clearComposerInputs = useCallback(() => {
     setImagePrompt("");
-    setReferenceImageFiles([]);
     setReferenceImages([]);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -1044,7 +1051,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         })),
       );
 
-      setReferenceImageFiles((prev) => [...prev, ...files]);
       setReferenceImages((prev) => [...prev, ...previews]);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -1067,44 +1073,29 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   );
 
   const handleRemoveReferenceImage = useCallback((index: number) => {
-    setReferenceImageFiles((prev) => {
-      const next = prev.filter((_, currentIndex) => currentIndex !== index);
-      if (next.length === 0 && fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-      return next;
-    });
     setReferenceImages((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
-  }, []);
+    if (referenceImages.length <= 1 && fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }, [referenceImages.length]);
 
   const handleContinueEdit = useCallback(
-    async (conversationId: string, image: StoredImage | StoredReferenceImage) => {
-      try {
-        const nextReference =
-          "dataUrl" in image
-            ? {
-                referenceImage: image,
-                file: dataUrlToFile(image.dataUrl, image.name, image.type),
-              }
-            : await buildReferenceImageFromStoredImage(image, `conversation-${conversationId}-${Date.now()}.png`);
-        if (!nextReference) {
-          return;
-        }
-
-        setSelectedConversationId(conversationId);
-
-        setReferenceImages((prev) => [...prev, nextReference.referenceImage]);
-        setReferenceImageFiles((prev) => [...prev, nextReference.file]);
-        setImagePrompt("");
-        textareaRef.current?.focus();
-        toast.success("已加入当前参考图，继续输入描述即可编辑");
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "读取结果图失败";
-        toast.error(message);
+    (conversationId: string, image: StoredImage | StoredReferenceImage) => {
+      const nextReference =
+        isStoredReferenceImage(image)
+          ? { referenceImage: image }
+          : buildReferenceImageFromStoredImage(image, `conversation-${conversationId}-${Date.now()}.png`);
+      if (!nextReference) {
+        return;
       }
-    },
-    [],
-  );
+
+      setSelectedConversationId(conversationId);
+
+      setReferenceImages((prev) => [...prev, nextReference.referenceImage]);
+      setImagePrompt("");
+      textareaRef.current?.focus();
+      toast.success("已加入当前参考图，继续输入描述即可编辑");
+    }, []);
 
   const handleReuseTurnConfig = useCallback(async (conversationId: string, turnId: string) => {
     const conversation = conversationsRef.current.find((item) => item.id === conversationId);
@@ -1124,9 +1115,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     setImageQuality(turn.quality);
     setImageModel(turn.model);
     setReferenceImages(turn.referenceImages);
-    setReferenceImageFiles(
-      turn.referenceImages.map((image) => dataUrlToFile(image.dataUrl, image.name, image.type)),
-    );
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -1202,10 +1190,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
       try {
 
-        const referenceFiles = activeTurn.referenceImages.map((image, index) =>
-          dataUrlToFile(image.dataUrl, image.name || `${activeTurn.id}-${index + 1}.png`, image.type),
-        );
-        if (activeTurn.mode === "edit" && referenceFiles.length === 0) {
+        const editReferences = buildEditTaskReferences(activeTurn.referenceImages, activeTurn.id);
+        if (activeTurn.mode === "edit" && editReferences.files.length === 0 && editReferences.imageUrls.length === 0) {
           throw new Error("未找到可用于继续编辑的参考图");
         }
 
@@ -1214,7 +1200,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           pendingImages.map((image) => {
             const taskId = image.taskId || image.id;
             return activeTurn.mode === "edit"
-              ? createImageEditTask(taskId, referenceFiles, activeTurn.prompt, activeTurn.model, activeTurn.size, activeTurn.quality)
+              ? createImageEditTask(taskId, editReferences.files, activeTurn.prompt, activeTurn.model, activeTurn.size, activeTurn.quality, editReferences.imageUrls)
               : createImageGenerationTask(taskId, activeTurn.prompt, activeTurn.model, activeTurn.size, activeTurn.quality);
           }),
         );
@@ -1266,7 +1252,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               const resubmitted = await Promise.all(
                 missingImages.map((image) =>
                   activeTurn.mode === "edit"
-                    ? createImageEditTask(image.taskId || image.id, referenceFiles, activeTurn.prompt, activeTurn.model, activeTurn.size, activeTurn.quality)
+                    ? createImageEditTask(image.taskId || image.id, editReferences.files, activeTurn.prompt, activeTurn.model, activeTurn.size, activeTurn.quality, editReferences.imageUrls)
                     : createImageGenerationTask(image.taskId || image.id, activeTurn.prompt, activeTurn.model, activeTurn.size, activeTurn.quality),
                 ),
               );
@@ -1524,7 +1510,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       return;
     }
 
-    const effectiveImageMode: ImageConversationMode = referenceImageFiles.length > 0 ? "edit" : "generate";
+    const effectiveImageMode: ImageConversationMode = referenceImages.length > 0 ? "edit" : "generate";
 
     const targetConversation = selectedConversationId
       ? conversationsRef.current.find((conversation) => conversation.id === selectedConversationId) ?? null

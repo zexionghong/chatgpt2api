@@ -179,6 +179,12 @@ def _request_excerpt(text: object, limit: int = 1000) -> str:
     return normalized[: limit - 1].rstrip() + "…"
 
 
+def _format_duration_ms(duration_ms: int) -> str:
+    if duration_ms < 1000:
+        return f"{duration_ms}ms"
+    return f"{duration_ms / 1000:.2f}s"
+
+
 def _image_error_response(exc: Exception) -> JSONResponse:
     from services.protocol.conversation import public_image_error_message
 
@@ -301,6 +307,7 @@ class LoggedCall:
 
     def log(self, suffix: str, result: object = None, status: str = "success", error: str = "",
             urls: list[str] | None = None, account_email: str = "", conversation_id: str = "") -> None:
+        duration_ms = int((time.time() - self.started) * 1000)
         detail = {
             "key_id": self.identity.get("id"),
             "key_name": self.identity.get("name"),
@@ -309,7 +316,7 @@ class LoggedCall:
             "model": self.model,
             "started_at": datetime.fromtimestamp(self.started).strftime("%Y-%m-%d %H:%M:%S"),
             "ended_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "duration_ms": int((time.time() - self.started) * 1000),
+            "duration_ms": duration_ms,
             "status": status,
         }
         request_excerpt = _request_excerpt(self.request_text)
@@ -334,4 +341,5 @@ class LoggedCall:
         collected_urls = [*(urls or []), *_collect_urls(result)]
         if collected_urls and not self.endpoint.startswith("/v1/search"):
             detail["urls"] = list(dict.fromkeys(collected_urls))
-        log_service.add(LOG_TYPE_CALL, f"{self.summary}{suffix}", detail)
+        duration_suffix = f"，耗时 {_format_duration_ms(duration_ms)}" if self.endpoint.startswith("/v1/images") else ""
+        log_service.add(LOG_TYPE_CALL, f"{self.summary}{suffix}{duration_suffix}", detail)

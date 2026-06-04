@@ -120,6 +120,9 @@ def log(text: str, color: str = "") -> None:
         print(f"{prefix}{datetime.now().strftime('%H:%M:%S')} {text}{suffix}")
 
 
+mail_provider.mail_log_sink = log
+
+
 def step(index: int, text: str, color: str = "") -> None:
     log(f"[任务{index}] {text}", color)
 
@@ -366,18 +369,32 @@ class PlatformRegistrar:
         resp, error = request_with_local_retry(self.session, "post", f"{auth_base}/api/accounts/user/register", json={"username": email, "password": password}, headers=headers, verify=False)
         if resp is None or resp.status_code != 200:
             data = _response_json(resp) if resp is not None else {}
-            if data.get("message") == "Failed to create account. Please try again.":
+            error_obj = data.get("error") if isinstance(data.get("error"), dict) else {}
+            upstream_message = str(data.get("message") or error_obj.get("message") or "").strip()
+            upstream_code = str(data.get("code") or error_obj.get("code") or "").strip()
+            if upstream_message == "Failed to create account. Please try again.":
                 step(index, "注册失败提示: 邮箱域名很可能因滥用被封禁，请更换邮箱域名", "yellow")
+            step(
+                index,
+                f"提交注册密码失败，未触发发送验证码: HTTP {getattr(resp, 'status_code', 'unknown')}"
+                f"{f'，code={upstream_code}' if upstream_code else ''}"
+                f"{f'，message={upstream_message}' if upstream_message else ''}",
+                "yellow",
+            )
             detail = f", detail={json.dumps(data, ensure_ascii=False)}" if data else ""
             raise RuntimeError(error or f"user_register_http_{getattr(resp, 'status_code', 'unknown')}{detail}")
         step(index, "提交注册密码完成")
 
     def _send_otp(self, index: int) -> None:
         step(index, "开始发送验证码")
-        resp, error = request_with_local_retry(self.session, "get", f"{auth_base}/api/accounts/email-otp/send", headers=self._navigate_headers(f"{auth_base}/create-account/password"), allow_redirects=True, verify=False)
+        resp, error = request_with_local_retry(self.session, "get", f"{auth_base}/api/accounts/email-otp/send", headers=self._navigate_headers(f"{auth_base}/create-account/password"), allow_redirects=False, verify=False)
+        location = str(getattr(resp, "headers", {}).get("location") or "").strip() if resp is not None else ""
         if resp is None or resp.status_code not in (200, 302):
+            debug = _response_debug_detail(resp)
+            step(index, f"发送验证码失败: HTTP {getattr(resp, 'status_code', 'unknown')}{f'，location={location}' if location else ''}{f'，{debug}' if debug else ''}", "yellow")
             raise RuntimeError(error or f"send_otp_http_{getattr(resp, 'status_code', 'unknown')}")
-        step(index, "发送验证码完成")
+        debug = _response_debug_detail(resp, limit=300)
+        step(index, f"发送验证码完成: HTTP {resp.status_code}{f'，location={location}' if location else ''}{f'，{debug}' if debug else ''}")
 
     def _validate_otp(self, code: str, index: int) -> None:
         step(index, f"开始校验验证码 {code}")

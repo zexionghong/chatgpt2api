@@ -51,13 +51,20 @@
   "image_poll_interval_secs": 10,
   "image_poll_initial_wait_secs": 10,
   "image_storage": {
-    "enabled": false,
-    "mode": "local",
+    "enabled": true,
+    "mode": "s3",
     "webdav_url": "",
     "webdav_username": "",
     "webdav_password": "",
     "webdav_root_path": "chatgpt2api/images",
-    "public_base_url": ""
+    "s3_endpoint": "https://7274d97a235c941b1f4d09a2027f26e0.r2.cloudflarestorage.com",
+    "s3_region": "auto",
+    "s3_bucket": "openai",
+    "s3_access_key_id": "b2b7600761146e0a174b98a3ffdcc353",
+    "s3_secret_access_key": "fa7a472d864ce4815a1cdb31a28b555b717f20e058139faab1c14ea4d466346f",
+    "s3_prefix": "images",
+    "s3_force_path_style": true,
+    "public_base_url": "https://image.tasksetly.com"
   },
   "image_min_free_mb": 500,
   "chat_completion_cache": {

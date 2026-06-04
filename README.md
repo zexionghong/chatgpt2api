@@ -78,6 +78,36 @@ environment:
   - DATABASE_URL=postgresql://user:password@host:5432/dbname
 ```
 
+### 图片云端存储
+
+图片生成结果默认保存到本机 `data/images`，也可以在 `config.json` 的 `image_storage` 中启用云端存储：
+
+- `mode: "webdav"`：仅上传 WebDAV
+- `mode: "both"`：本机 + WebDAV
+- `mode: "s3"`：仅上传 S3 兼容对象存储
+- `mode: "s3_both"`：本机 + S3 兼容对象存储
+
+S3 兼容存储示例：
+
+```json
+{
+  "image_storage": {
+    "enabled": true,
+    "mode": "s3",
+    "s3_endpoint": "https://oss-cn-hangzhou.aliyuncs.com",
+    "s3_region": "cn-hangzhou",
+    "s3_bucket": "your-bucket",
+    "s3_access_key_id": "your-access-key-id",
+    "s3_secret_access_key": "your-secret-access-key",
+    "s3_prefix": "chatgpt2api/images",
+    "s3_force_path_style": true,
+    "public_base_url": "https://cdn.example.com"
+  }
+}
+```
+
+`public_base_url` 留空时，接口返回本应用的 `/images/...` 代理地址；填写后，接口会直接返回 `public_base_url/s3_prefix/...` 的公开图片地址。
+
 ## 功能
 
 ### API 兼容能力
