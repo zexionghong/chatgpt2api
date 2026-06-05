@@ -747,8 +747,8 @@ class QQMailProvider(BaseMailProvider):
         self.imap_mailbox = str(entry.get("imap_mailbox") or "INBOX").strip() or "INBOX"
         self.clock_skew_secs = max(0, int(entry.get("clock_skew_secs") or 30))
         self.search_limit = max(1, int(entry.get("search_limit") or 5))
-        self.retry_attempts = max(1, int(entry.get("retry_attempts") or 5))
-        self.retry_interval_secs = max(0, float(entry.get("retry_interval_secs") or 3))
+        self.retry_attempts = max(1, int(entry.get("retry_attempts") or 3))
+        self.retry_interval_secs = max(0, float(entry.get("retry_interval_secs") or 20))
 
     def create_mailbox(self, username: str | None = None) -> dict[str, Any]:
         if not self.domain:

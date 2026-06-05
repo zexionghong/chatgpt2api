@@ -149,7 +149,7 @@ class QQMailProviderTests(unittest.TestCase):
         self.assertEqual(FakeIMAP.fetched_ids, [b"7", b"6", b"5", b"4", b"3"])
         self.assertFalse(FakeIMAP.search_called)
 
-    def test_wait_for_code_retries_five_times_every_three_seconds(self):
+    def test_wait_for_code_retries_three_times_every_twenty_seconds(self):
         provider = self._provider()
         mailbox = {
             "address": "target@example.com",
@@ -163,8 +163,8 @@ class QQMailProviderTests(unittest.TestCase):
             code = provider.wait_for_code(mailbox)
 
         self.assertIsNone(code)
-        self.assertEqual(fetch_mock.call_count, 5)
-        self.assertEqual([call.args[0] for call in sleep_mock.call_args_list], [3, 3, 3, 3])
+        self.assertEqual(fetch_mock.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep_mock.call_args_list], [20, 20])
 
 
 if __name__ == "__main__":

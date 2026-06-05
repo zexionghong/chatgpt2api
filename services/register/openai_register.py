@@ -445,6 +445,8 @@ class PlatformRegistrar:
         self._platform_authorize(email, index)
         self._register_user(email, password, index)
         self._send_otp(index)
+        step(index, "发送验证码后等待 5 秒再查询邮箱")
+        time.sleep(5)
         step(index, "开始等待注册验证码")
         code = wait_for_code(mailbox)
         if not code:
